@@ -13,15 +13,15 @@ import java.util.concurrent.TimeUnit;
  */
 public class Main {
     public static void main(String[] args) {
-        MyThreadPool myTheadPool = new MyThreadPool(2,4,new ArrayBlockingQueue(2), new MyThreadPool.AbortPolicy(),2,TimeUnit.SECONDS);
+        MyThreadPool myTheadPool = new MyThreadPool(2,8,new ArrayBlockingQueue(2), new MyThreadPool.AbortPolicy(),2,TimeUnit.SECONDS);
 
-        ThreadPoolExecutor threadPoolExecutor = new ThreadPoolExecutor(2,4,2,TimeUnit.SECONDS,new ArrayBlockingQueue<>(2),new ThreadPoolExecutor.AbortPolicy());
+        ThreadPoolExecutor threadPoolExecutor = new ThreadPoolExecutor(2,8,2,TimeUnit.SECONDS,new ArrayBlockingQueue<>(2),new ThreadPoolExecutor.AbortPolicy());
 
-        for (int i = 0; i < 6; i++) {
+        for (int i = 0; i < 10; i++) {
             final int fi = i;
             myTheadPool.execute(() -> {
                 try {
-                    Thread.sleep(2000);
+                    Thread.sleep(1000);
                 }catch (InterruptedException e){
                     throw new RuntimeException(e);
                 }

@@ -14,6 +14,11 @@ public class MyThreadPool {
     // 核心线程是否回收
     boolean allowCoreThreadTimeOut;
 
+    // 完成任务数 当worker thread结束时更新
+    private long completedTaskCount;
+
+    private volatile ThreadFactory threadFactory;
+
     // 存活时间
     int keepAliveTime;
 
@@ -27,10 +32,10 @@ public class MyThreadPool {
     int maxSize;
 
     // 核心线程队列
-    List<Thread> coreThreadList;
+    List<Worker> coreThreadList;
 
     // 辅助线程队列
-    List<Thread> supportThreadList;
+    List<Worker> supportThreadList;
 
     // 阻塞队列 存放任务
     private final BlockingQueue<Runnable> blockingQueue;
@@ -45,8 +50,31 @@ public class MyThreadPool {
         this.rejectHandler = rejectHandler;
         this.keepAliveTime = keepAliveTime;
         this.timeUnit = timeUnit;
+        this.threadFactory = Executors.defaultThreadFactory();
+        this.allowCoreThreadTimeOut = false;
         coreThreadList = new CopyOnWriteArrayList<>();
         supportThreadList = new CopyOnWriteArrayList<>();
+    }
+
+    public MyThreadPool(int corePoolSize, int maxSize, BlockingQueue<Runnable> blockingQueue,RejectHandler rejectHandler,int keepAliveTime,TimeUnit timeUnit,ThreadFactory threadFactory) {
+        this.corePoolSize = corePoolSize;
+        this.maxSize = maxSize;
+        this.blockingQueue = blockingQueue;
+        this.rejectHandler = rejectHandler;
+        this.keepAliveTime = keepAliveTime;
+        this.timeUnit = timeUnit;
+        this.threadFactory = threadFactory;
+        this.allowCoreThreadTimeOut = false;
+        coreThreadList = new CopyOnWriteArrayList<>();
+        supportThreadList = new CopyOnWriteArrayList<>();
+    }
+
+    public ThreadFactory getThreadFactory() {
+        return threadFactory;
+    }
+
+    public void setThreadFactory(ThreadFactory threadFactory) {
+        this.threadFactory = threadFactory;
     }
 
     /*
@@ -61,19 +89,21 @@ public class MyThreadPool {
         if (coreThreadList.size() < corePoolSize){
             Worker worker = new Worker(task);
             coreThreadList.add(worker);
-            worker.start();
-            System.out.println(worker.getName() + ":核心工作线程创建");
+            final Thread t = worker.thread;
+            t.start();
+            System.out.println(t.getName() + ":核心工作线程创建");
             return;
         }
         // 2.核心线程满了，则直接放入阻塞任务队列中等待执行
         if (blockingQueue.offer(task)){
-            System.out.println("进入阻塞队列");
+            System.out.println(Thread.currentThread().getName() + "的任务进入阻塞队列");
             // 检查是否需要补充线程
             if (coreThreadList.isEmpty() && coreThreadList.size() < corePoolSize) {
                 Worker worker = new Worker(null);
                 coreThreadList.add(worker);
-                worker.start();
-                System.out.println(worker.getName() + ":核心工作线程创建");
+                final Thread t = worker.thread;
+                t.start();
+                System.out.println(t.getName() + ":核心工作线程创建");
             }
             return;
         }
@@ -81,8 +111,9 @@ public class MyThreadPool {
         if (coreThreadList.size() + supportThreadList.size() < maxSize){
             Worker worker = new Worker(task);
             supportThreadList.add(worker);
-            worker.start();
-            System.out.println(worker.getName() + ":辅助工作线程创建");
+            final Thread t = worker.thread;
+            t.start();
+            System.out.println(t.getName() + ":辅助工作线程创建");
             return;
         }
         // 4.核心线程满了，阻塞队列满了，辅助线程也满了，则执行拒绝策略
@@ -91,14 +122,25 @@ public class MyThreadPool {
         rejectHandler.reject(task, this);
     }
 
-    class Worker extends Thread{
+    /*
+    * Worker添加Thread，用于后续新增worker的状态管理
+    * 在线程池的设计中，所有的线程都是平等的，所谓的核心线程只是 boolean timed = allowCoreThreadTimeOut || wc > corePoolSize; 筛选出来的幸运儿
+    * TODO 去掉核心线程队列和非核心线程队列 使用通过线程数进行管理
+    * */
+    class Worker implements Runnable{
+        final Thread thread;
         private Runnable firstTask;
         private volatile boolean running = true;
 
-        public Worker(Runnable firstTask){ this.firstTask = firstTask;}
+        public Worker(Runnable firstTask){
+            this.firstTask = firstTask;
+            this.thread = getThreadFactory().newThread(this);
+            System.out.println("Worker创建：" + thread.getName());
+        }
 
         @Override
         public void run() {
+            // firstTask 提高新任务的响应速度，无需入队，优先执行
             Runnable task = firstTask;
             firstTask = null;
 
@@ -144,46 +186,9 @@ public class MyThreadPool {
 
         public void stopWorker() {
             running = false;
-            this.interrupt();
+            this.thread.interrupt();
         }
     }
-
-    // 从阻塞任务队列中获取task执行
-//    class CoreThread extends Thread{
-//        @Override
-//        public void run() {
-//            while (true){
-//                // 使用take方法，因为获取不到会阻塞等待，所以核心线程不会被回收
-//                try {
-//                    Runnable task = blockingQueue.take();
-//                    System.out.println(Thread.currentThread().getName()+ ":拿到一个任务");
-//                    task.run();
-//                } catch (InterruptedException e) {
-//                    e.printStackTrace();
-//                }
-//            }
-//        }
-//    }
-//
-//    class SupportThread extends Thread{
-//        @Override
-//        public void run() {
-//            while (true){
-//                try {
-//                    // poll非阻塞等待，所以会被回收
-//                    Runnable task = blockingQueue.poll(keepAliveTime,timeUnit);
-//                    if (task == null){
-//                        break;
-//                    }
-//                    System.out.println(Thread.currentThread().getName()+ ":拿到一个任务");
-//                    task.run();
-//                } catch (InterruptedException e) {
-//                    e.printStackTrace();
-//                }
-//            }
-//            System.out.println(Thread.currentThread().getName() + ":辅助线程被回收");
-//        }
-//    }
 
     /**
      * A handler for rejected tasks that throws a
@@ -197,9 +202,7 @@ public class MyThreadPool {
 
         @Override
         public void reject(Runnable rejectCommand, MyThreadPool theadPool) {
-            throw new RejectedExecutionException("Task " + rejectCommand.toString() +
-                    " rejected from " +
-                    theadPool.toString());
+            System.out.println("do nothing and discard");
         }
     }
 
