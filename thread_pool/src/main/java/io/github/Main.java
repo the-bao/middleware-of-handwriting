@@ -13,7 +13,7 @@ import java.util.concurrent.TimeUnit;
  */
 public class Main {
     public static void main(String[] args) {
-        MyThreadPool myTheadPool = new MyThreadPool(2,8,new ArrayBlockingQueue(2), new MyThreadPool.AbortPolicy(),2,TimeUnit.SECONDS);
+        MyThreadPool myTheadPool = new MyThreadPool(2,8,new ArrayBlockingQueue(2), new MyThreadPool.AbortPolicy(),1,TimeUnit.SECONDS);
 
         ThreadPoolExecutor threadPoolExecutor = new ThreadPoolExecutor(2,8,2,TimeUnit.SECONDS,new ArrayBlockingQueue<>(2),new ThreadPoolExecutor.AbortPolicy());
 

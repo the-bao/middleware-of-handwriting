@@ -193,10 +193,23 @@ public class MyThreadPool {
                 }
             }
         }finally {
-            System.out.println("线程创建：" + workerStarted);
-            System.out.println("当前线程数：" + workers.size());
+            if (workerStarted == false) removeWorker(w);
+            System.out.println("线程创建：" + workerStarted + "| 当前线程数：" + workers.size() + "| 线程是否核心：" + core);
         }
         return workerStarted;
+    }
+
+    private void removeWorker(Worker worker){
+        final ReentrantLock mainLock = this.mainLock;
+        mainLock.lock();
+        try {
+            if (worker != null) workers.remove(worker);
+            for (;;){
+                if (ctl.compareAndSet(ctl.get(),ctl.get()-1)) break;
+            }
+        }finally {
+            mainLock.unlock();
+        }
     }
 
     /*
@@ -222,22 +235,24 @@ public class MyThreadPool {
             firstTask = null;
 
             while (running){
-                // 如果没有初始任务，则从队列中获取任务
-                if (task == null) {
+                // 如果没有初始任务，则从队列中循环获取任务。核心线程一只循环获取，非核心线程循环一次没获取到就退出
+                boolean timeOut = false;
+                while (task == null) {
                     try {
                         // 根据是否为核心线程和是否允许超时来决定获取任务的方式 , 线程之间是平等的 , 是否核心取决于线程数量
                         boolean isCoreThread = getWorkCount(ctl.get()) <= corePoolSize;
+                        System.out.println(Thread.currentThread().getName() + "是否为核心：" + isCoreThread + "| timeout:" + timeOut);
+
+                        if (!isCoreThread && timeOut) break;
+
                         if (isCoreThread && !allowCoreThreadTimeOut) {
                             // 核心线程且不允许超时，使用阻塞获取
                             task = blockingQueue.take();
                         } else {
                             // 非核心线程或允许核心线程超时，使用超时获取
                             task = blockingQueue.poll(keepAliveTime, timeUnit);
-                            if (task == null) {
-                                // 超时没有获取到任务，结束线程
-                                break;
-                            }
                         }
+                        timeOut = true;
                     } catch (InterruptedException e) {
                         running = false;
                         break;
@@ -253,10 +268,13 @@ public class MyThreadPool {
                     } finally {
                         task = null; // 清空任务引用
                     }
+                }else {
+                    break;
                 }
             }
-            // 从线程列表中移除
-            System.out.println(Thread.currentThread().getName() + ":工作线程被回收");
+            // 清理worker
+            removeWorker(this);
+            System.out.println(Thread.currentThread().getName() + ":工作线程被回收" + " | 当前线程数：" + getWorkCount(ctl.get()));
         }
 
         public void stopWorker() {
