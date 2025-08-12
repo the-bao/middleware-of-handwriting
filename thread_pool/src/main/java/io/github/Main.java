@@ -21,11 +21,17 @@ public class Main {
             final int fi = i;
             myTheadPool.execute(() -> {
                 try {
-                    Thread.sleep(1000);
+                    Thread.sleep(10*1000);
                 }catch (InterruptedException e){
                     throw new RuntimeException(e);
                 }
+
+                System.out.println("++++++++++++++++++++++++++++++++++++++++");
                 System.out.println(Thread.currentThread().getName() + " " + fi);
+                System.out.println("目前已完成的任务数：" + myTheadPool.getCompletedTaskCount());
+                System.out.println("目前活跃线程数：" + myTheadPool.getActiveCount());
+                System.out.println("总任务数：" + myTheadPool.getTaskCount());
+                System.out.println("++++++++++++++++++++++++++++++++++++++++");
             });
         }
 

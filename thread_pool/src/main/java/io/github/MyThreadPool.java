@@ -5,6 +5,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.locks.AbstractQueuedSynchronizer;
 import java.util.concurrent.locks.ReentrantLock;
 
 /**
@@ -17,10 +18,10 @@ public class MyThreadPool {
     // 核心线程是否回收
     boolean allowCoreThreadTimeOut;
 
-    // 完成任务数 当worker thread结束时更新
-    private long completedTaskCount;
-
     private volatile ThreadFactory threadFactory;
+
+    // 增加worker时加锁
+    private final ReentrantLock mainLock = new ReentrantLock();
 
     // 存活时间
     int keepAliveTime;
@@ -28,20 +29,23 @@ public class MyThreadPool {
     // 时间单位
     TimeUnit timeUnit;
 
-    // 核心线程数
+    // 完成任务数 当worker thread结束时更新
+    private long completedTaskCount;
+
+    // 核心线程数（监控）
     int corePoolSize;
 
-    // 最大线程数
+    // 最大线程数（监控）
     int maxSize;
 
-    // 增加worker时加锁
-    private final ReentrantLock mainLock = new ReentrantLock();
-
-    // 线程池最大线程数 （监控使用）
+    // 线程池最大线程数 （监控）
     private int largestPoolSize;
 
-    // 线程集合 （监控使用）
+    // 线程集合 （监控）
     private final HashSet<Worker> workers = new HashSet<>();
+
+    // 阻塞队列 存放任务（监控）
+    private final BlockingQueue<Runnable> blockingQueue;
 
     /*
     * 状态控制
@@ -79,9 +83,6 @@ public class MyThreadPool {
     private static int getCtl(int runState, int workCount){
         return runState | workCount;
     }
-
-    // 阻塞队列 存放任务
-    private final BlockingQueue<Runnable> blockingQueue;
 
     // 拒绝策略
     private RejectHandler rejectHandler;
@@ -182,6 +183,8 @@ public class MyThreadPool {
                     if (rs == RUNNING || rs == SHUTDOWN && firstTask == null){
                         if (t.isAlive()) throw new IllegalThreadStateException();
                         workers.add(w);
+                        int s = Math.max(largestPoolSize,maxSize);
+                        largestPoolSize = s;
                         workerAdded = true;
                     }
                 }finally {
@@ -203,24 +206,65 @@ public class MyThreadPool {
         final ReentrantLock mainLock = this.mainLock;
         mainLock.lock();
         try {
-            if (worker != null) workers.remove(worker);
+            if (worker != null) {
+                // 线程销毁前将完成的任务数量加入线程池资源统计
+                completedTaskCount += worker.completedTasks;
+                workers.remove(worker);
+            }
             for (;;){
                 if (ctl.compareAndSet(ctl.get(),ctl.get()-1)) break;
             }
         }finally {
             mainLock.unlock();
+            System.out.println(Thread.currentThread().getName() + ":工作线程被回收" + " | 当前线程数：" + getWorkCount(ctl.get()));
         }
     }
 
     /*
     * Worker添加Thread，用于后续新增worker的状态管理
     * 在线程池的设计中，所有的线程都是平等的，所谓的核心线程只是 boolean timed = allowCoreThreadTimeOut || wc > corePoolSize; 筛选出来的幸运儿
-    * TODO 去掉核心线程队列和非核心线程队列 使用通过线程数进行管理
     * */
-    class Worker implements Runnable{
+    class Worker extends AbstractQueuedSynchronizer implements Runnable {
         final Thread thread;
         private Runnable firstTask;
         private volatile boolean running = true;
+
+        /** Per-thread task counter */
+        volatile long completedTasks;
+
+        // Lock methods
+        //
+        // The value 0 represents the unlocked state.
+        // The value 1 represents the locked state.
+
+        protected boolean isHeldExclusively() {
+            return getState() != 0;
+        }
+
+        @Override
+        protected boolean tryAcquire(int arg) {
+            if (compareAndSetState(0,1)){
+                setExclusiveOwnerThread(Thread.currentThread());
+                return true;
+            }
+            return false;
+        }
+
+        @Override
+        protected boolean tryRelease(int arg) {
+            setExclusiveOwnerThread(null);
+            setState(0);
+            return true;
+        }
+
+        // 通过AQS实现简易的互斥锁
+        public void lock(){ acquire(1); }
+
+        public boolean tryLock(){ return tryAcquire(1); }
+
+        public void unlock(){ release(1); };
+
+        public boolean isLocked(){ return isHeldExclusively();}
 
         public Worker(Runnable firstTask){
             this.firstTask = firstTask;
@@ -260,6 +304,7 @@ public class MyThreadPool {
                 }
 
                 if (task != null) {
+                    this.lock();
                     try {
                         System.out.println(Thread.currentThread().getName() + ":执行一个任务");
                         task.run();
@@ -267,6 +312,8 @@ public class MyThreadPool {
                         e.printStackTrace();
                     } finally {
                         task = null; // 清空任务引用
+                        this.completedTasks++;
+                        this.unlock();
                     }
                 }else {
                     break;
@@ -274,12 +321,78 @@ public class MyThreadPool {
             }
             // 清理worker
             removeWorker(this);
-            System.out.println(Thread.currentThread().getName() + ":工作线程被回收" + " | 当前线程数：" + getWorkCount(ctl.get()));
         }
 
         public void stopWorker() {
             running = false;
             this.thread.interrupt();
+        }
+    }
+
+    /*
+    * 监控部分
+    * */
+
+    public int getCorePoolSize() {
+        return corePoolSize;
+    }
+
+    public int getMaxSize() {
+        return maxSize;
+    }
+
+    public boolean isAllowCoreThreadTimeOut() {
+        return allowCoreThreadTimeOut;
+    }
+
+    public BlockingQueue<Runnable> getBlockingQueue() {
+        return blockingQueue;
+    }
+
+    public int getLargestPoolSize() {
+        return largestPoolSize;
+    }
+
+    public int getActiveCount(){
+        final ReentrantLock mainLock = this.mainLock;
+        mainLock.lock();
+        try {
+            int n = 0;
+            for (Worker w:workers){
+                if (w.isLocked()) n++;
+            }
+            return n;
+        }finally {
+            mainLock.unlock();
+        }
+    }
+
+    public long getCompletedTaskCount(){
+        final ReentrantLock mainLock = this.mainLock;
+        mainLock.lock();
+        try {
+            long n = completedTaskCount;
+            for (Worker w:workers){
+                n += w.completedTasks;
+            }
+            return n;
+        }finally {
+            mainLock.unlock();
+        }
+    }
+
+    public long getTaskCount(){
+        final ReentrantLock mainLock = this.mainLock;
+        mainLock.lock();
+        try {
+            long n = completedTaskCount;
+            for (Worker w:workers){
+                n += w.completedTasks;
+                if (w.isLocked()) ++n;
+            }
+            return n + blockingQueue.size();
+        }finally {
+            mainLock.unlock();
         }
     }
 
