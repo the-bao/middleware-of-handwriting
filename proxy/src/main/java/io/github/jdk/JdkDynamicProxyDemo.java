@@ -2,6 +2,8 @@ package io.github.jdk;
 
 import java.lang.reflect.Proxy;
 
+import static io.github.jdk.ProxyBytecodeDumper.saveProxyClass;
+
 /**
  * @author rty
  * @version 1.0
@@ -9,7 +11,7 @@ import java.lang.reflect.Proxy;
  * @date 2025/8/17 18:00
  */
 public class JdkDynamicProxyDemo {
-    public static void main(String[] args) {
+    public static void main(String[] args) throws Exception {
         // 确保参数生效
         System.setProperty("jdk.proxy.ProxyGenerator.saveGeneratedFiles", "true");
         // 打印确认
@@ -27,7 +29,8 @@ public class JdkDynamicProxyDemo {
         );
 
         proxy.saveUser("test");
-    }
 
+        proxy.test();
+    }
 }
 

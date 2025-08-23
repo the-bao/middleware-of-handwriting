@@ -12,6 +12,7 @@ public class UserServiceImpl implements UserService {
         System.out.println("保存用户：" + name);
     }
 
+    @Override
     public void test(){
         System.out.println("test");
     }
