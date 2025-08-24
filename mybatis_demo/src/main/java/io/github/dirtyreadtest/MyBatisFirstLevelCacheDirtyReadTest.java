@@ -7,6 +7,7 @@ import org.apache.ibatis.session.SqlSessionFactoryBuilder;
 import org.testng.annotations.Test;
 
 import java.io.InputStream;
+import java.sql.Connection;
 import java.util.concurrent.Executor;
 
 /**
@@ -16,16 +17,36 @@ import java.util.concurrent.Executor;
  * @date 2025/8/23 23:11
  */
 public class MyBatisFirstLevelCacheDirtyReadTest {
+    // 转换隔离级别代码为可读名称
+    private String getIsolationLevelName(int level) {
+        switch (level) {
+            case Connection.TRANSACTION_READ_UNCOMMITTED: return "READ_UNCOMMITTED";
+            case Connection.TRANSACTION_READ_COMMITTED: return "READ_COMMITTED";
+            case Connection.TRANSACTION_REPEATABLE_READ: return "REPEATABLE_READ";
+            case Connection.TRANSACTION_SERIALIZABLE: return "SERIALIZABLE";
+            case Connection.TRANSACTION_NONE: return "NONE";
+            default: return "UNKNOWN: " + level;
+        }
+    }
+
     @Test
     public void demonstrateDirtyRead() throws Exception {
-        // 1. 获取SqlSessionFactory (假设你已经配置好了)
+        // 1. 获取SqlSessionFactory
         InputStream inputStream = Resources.getResourceAsStream("mybatis-config.xml");
         SqlSessionFactory sqlSessionFactory = new SqlSessionFactoryBuilder().build(inputStream);
 
         Long id = 1L;
 
         // 2. 打开第一个SqlSession（操作A）
-        try (SqlSession sqlSessionA = sqlSessionFactory.openSession()) {
+        // 特别注意 sqlSessionFactory.openSession(true) 如果不显式声明未true，需要手动提交事务，在commit前所有的操作都属于同一个事务
+        // 在 RR 的隔离级别下，同一个事务都是快照读，所以即使清理了缓存也只能读到旧数据
+        try (SqlSession sqlSessionA = sqlSessionFactory.openSession(true)) {
+            Connection conn = sqlSessionA.getConnection();
+            int isolationLevel = conn.getTransactionIsolation();
+
+            System.out.println("事务隔离级别代码: " + isolationLevel);
+            System.out.println("事务隔离级别描述: " + getIsolationLevelName(isolationLevel));
+
             UserMapper mapperA = sqlSessionA.getMapper(UserMapper.class);
 
             System.out.println("========= 操作A：第一次查询ID为1的用户 =========");
