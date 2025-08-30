@@ -19,17 +19,28 @@ public class MyLock extends AbstractQueuedSynchronizer implements Lock {
     * */
     @Override
     protected boolean tryAcquire(int arg) {
+        Thread thread = Thread.currentThread();
         int c = getState();
         if (c == 0){
             if (compareAndSetState(0,arg)){
+                setExclusiveOwnerThread(thread);
                 return true;
             }
+        }else if (thread == getExclusiveOwnerThread()){
+            // 实现可重入
+            setState(c + arg);
+            return true;
         }
+
         return false;
     }
 
     @Override
     protected boolean tryRelease(int arg) {
+        Thread thread = Thread.currentThread();
+        if (thread != getExclusiveOwnerThread())
+            throw new IllegalMonitorStateException("释放锁线程不是持有锁线程");
+
         int c = getState() - arg;
         boolean free = false;
         if (c == 0){

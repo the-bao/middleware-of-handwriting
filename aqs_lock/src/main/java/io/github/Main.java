@@ -21,7 +21,9 @@ public class Main {
             Thread thread = new Thread(() -> {
                 lock.lock();
                 try {
+                    lock.lock();
                     count[0]++;
+                    lock.unlock();
                 }finally {
                     lock.unlock();
                 }
